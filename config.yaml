@@ -18,14 +18,14 @@ steps:
   - name: "选择地区"
     action_type: "interact"
     interactions:
-      - {type: "select", selector: "#provinceSelect", value: "四川"}
+      - {type: "select", selector: "#provinceSelect", value: "海南"}
     # 注意：根据你的描述，选择完下拉框也会触发自动跳转
     wait_for_navigation: true 
 
   - name: "筛选IP并分发任务"
     action_type: "dispatch_tabs"
     container_selector: "body > div.container > section.nth-child(7)"
-    table_selector: "section[aria-label='组播源列表'] table.iptv-table"
+    table_selector: "section[aria-label='IPTV源列表'] table.iptv-table"
     filter_condition: { column: "状态", exclude: "失效" }
     click_column: "IP"
     onclick_js: "gotoIP\\('([^']+)',\\s*'([^']+)'\\)"
