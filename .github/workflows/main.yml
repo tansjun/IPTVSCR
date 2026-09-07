@@ -1,0 +1,117 @@
+name: Daily Update
+
+on:
+  schedule:
+    # 任务1：UTC 23:00触发（对应北京时间次日07:00），延迟0-30分钟
+    - cron: '0 23 * * *'
+    # 任务2：UTC 6:00触发（对应北京时间14:00），后续随机延迟0-240分钟（0-4小时），覆盖14:00-18:00
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    branches:
+      - main
+
+jobs:
+  run_script:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 允许自动提交并推送更新
+    env:
+      TZ: Asia/Shanghai
+      PLAYWRIGHT_HEADLESS: "1"
+      # 任务1延迟（UTC23:00触发，对应北京时间07:00，延迟0-30分钟）
+      TASK1_MIN_DELAY: 0
+      TASK1_MAX_DELAY: 1800
+      # 任务2延迟（UTC6:00触发，对应北京时间14:00，延迟0-240分钟=0-14400秒，覆盖14:00-18:00）
+      TASK2_MIN_DELAY: 0
+      TASK2_MAX_DELAY: 14400
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    # 缓存Python依赖与playwright浏览器，加速后续运行
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/pip
+          ~/.cache/ms-playwright
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install system dependencies (适配Ubuntu 22.04+)
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends libnss3 libatk-bridge2.0-0 libdrm-dev libxkbcommon-dev libgbm-dev libatspi2.0-0 libxshmfence-dev libasound2t64 libgtk-3-0 libx11-xcb1 libxcb-dri3-0 libxrandr2 libxcursor1 libxcomposite1 libasound2-plugins libpulse0
+
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        playwright install chromium --with-deps
+
+    - name: Generate random delay (区分两次任务)
+      if: github.event_name == 'schedule'
+      id: generate_delay
+      run: |
+        # 正确提取 cron 表达式的 分钟 和 小时（格式：分 时 日 月 周）
+        CRON_EXPR="${{ github.event.schedule }}"
+        read -r CRON_MIN CRON_HOUR _ _ _ <<< "$CRON_EXPR"
+
+        echo "✅ 触发定时任务的UTC时间：${CRON_HOUR}:${CRON_MIN}"
+
+        # 任务1：UTC23:00（北京时间07:00），延迟0-30分钟
+        if [ "$CRON_HOUR" = "23" ] && [ "$CRON_MIN" = "0" ]; then
+          MIN_DELAY=${{ env.TASK1_MIN_DELAY }}
+          MAX_DELAY=${{ env.TASK1_MAX_DELAY }}
+          echo "✅ 匹配到任务1（北京时间07:00），延迟范围：${MIN_DELAY}-${MAX_DELAY}秒"
+        # 任务2：UTC6:00（北京时间14:00），延迟0-14400秒（0-4小时）
+        elif [ "$CRON_HOUR" = "6" ] && [ "$CRON_MIN" = "0" ]; then
+          MIN_DELAY=${{ env.TASK2_MIN_DELAY }}
+          MAX_DELAY=${{ env.TASK2_MAX_DELAY }}
+          echo "✅ 匹配到任务2（北京时间14:00-18:00），延迟范围：${MIN_DELAY}-${MAX_DELAY}秒"
+        else
+          # 兜底：无延迟
+          MIN_DELAY=0
+          MAX_DELAY=0
+          echo "✅ 未匹配到预设任务，使用默认延迟：0秒"
+        fi
+
+        # 生成随机延迟
+        RANDOM_DELAY=$((MIN_DELAY + RANDOM % (MAX_DELAY - MIN_DELAY + 1)))
+        DELAY_MINUTES=$((RANDOM_DELAY / 60))
+        DELAY_SECONDS=$((RANDOM_DELAY % 60))
+
+        TRIGGER_TIME_UTC=$(printf "%02d:%02d" "$CRON_HOUR" "$CRON_MIN")
+        TRIGGER_TIME_CN=$(date -d "$TRIGGER_TIME_UTC UTC + 8 hours" +"%H:%M")
+        EXECUTE_TIME_CN=$(date -d "$TRIGGER_TIME_UTC UTC + 8 hours + $RANDOM_DELAY seconds" +"%H:%M:%S")
+
+        echo "✅ 触发时北京时间：${TRIGGER_TIME_CN}"
+        echo "✅ 本次随机延迟：${DELAY_MINUTES}分${DELAY_SECONDS}秒（总计${RANDOM_DELAY}秒）"
+        echo "✅ 实际执行北京时间：${EXECUTE_TIME_CN}"
+
+        echo "random_delay=$RANDOM_DELAY" >> $GITHUB_OUTPUT
+
+    - name: Execute random delay
+      if: github.event_name == 'schedule'
+      run: |
+        sleep ${{ steps.generate_delay.outputs.random_delay }}
+
+    - name: Run Python script
+      run: python IPTVSCR.py
+
+    - name: Commit and push if changed
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add -A
+        if ! git diff --staged --quiet; then
+          git commit -m "Auto-update live files $(date +'%Y-%m-%d %H:%M:%S')"
+          git push
+        fi

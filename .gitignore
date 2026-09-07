@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# 运行产物（不入库，CI 中由脚本重新生成）
+.logs/
+iptv_data.db
+*.log
+
+# 系统文件
+Thumbs.db
+.DS_Store
