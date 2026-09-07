@@ -22,6 +22,18 @@ PROVINCE_CODE = {
     "香港": "hk", "澳门": "mo",
 }
 
+# 合并输出分类规则（按顺序匹配，先命中先归类；未命中归入“其他频道”）
+CATEGORY_RULES = [
+    ("4K频道", "4K"),
+    ("央视频道", "CCTV"),
+    ("卫视频道", "卫视"),
+]
+CATEGORY_ORDER = ["4K频道", "央视频道", "卫视频道", "其他频道"]
+
+# 公告块：固定行 + 每次合并动态填充更新时间（格式与 MY 项目一致）
+ANNOUNCE_MAIN_URL = "https://gitlab.com/lr77/IPTV/-/raw/main/%E4%B8%BB%E8%A7%92.mp4"
+ANNOUNCE_TIME_URL = "https://gitlab.com/lr77/IPTV/-/raw/main/%E8%B5%B7%E9%A3%8E%E4%BA%86.mp4"
+
 class CooledLock(asyncio.Lock):
     def __init__(self, delay=3, group=None):
         super().__init__()
@@ -657,6 +669,14 @@ class AntiDetectScraper:
         return {'download_url':download_url ,'item_id':item_id}
         
 
+    def _categorize_channel(self, name):
+        """按分类规则顺序判断频道名称所属类别（4K → 央视 → 卫视 → 其他）"""
+        up = (name or "").strip().upper()
+        for cat, keyword in CATEGORY_RULES:
+            if keyword in up:
+                return cat
+        return "其他频道"
+
     def _resolve_region_code(self):
         """从 config 的 select 交互中取地区名，映射为省份缩写（如 海南 -> hi）"""
         region_name = None
@@ -716,11 +736,32 @@ class AntiDetectScraper:
         if not merged:
             print("[WARN] 合并结果为空，不生成输出文件")
             return
+
+        # 按类别分组（顺序：4K → 央视 → 卫视 → 其他）
+        buckets = {cat: [] for cat in CATEGORY_ORDER}
+        for line in merged:
+            name = line.split(",", 1)[0]
+            buckets[self._categorize_channel(name)].append(line)
+
+        # 组装输出：公告块 + 各分类块（分类为空则跳过该分类头）
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        output = [
+            "公告,#genre#",
+            f"更新日期,{ANNOUNCE_MAIN_URL}",
+            f"{now},{ANNOUNCE_TIME_URL}",
+        ]
+        for cat in CATEGORY_ORDER:
+            if buckets[cat]:
+                output.append(f"{cat},#genre#")
+                output.extend(buckets[cat])
+
         base_dir = os.path.dirname(os.path.abspath(__file__))
         out_path = os.path.join(base_dir, output_name)
         with open(out_path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(merged) + "\n")
+            fh.write("\n".join(output) + "\n")
         print(f"[SUCCESS] 已合并 {len(txt_files)} 个文件共 {len(merged)} 行 → {out_path}")
+        for cat in CATEGORY_ORDER:
+            print(f"[INFO] {cat}: {len(buckets[cat])} 条")
 
     def test(self):
         cmd_str='custom_process_download'
