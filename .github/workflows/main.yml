@@ -20,10 +20,10 @@ jobs:
       PLAYWRIGHT_HEADLESS: "1"
       # 任务1延迟（UTC23:00触发，对应北京时间07:00，延迟0-5分钟）
       TASK1_MIN_DELAY: 0
-      TASK1_MAX_DELAY: 300
+      TASK1_MAX_DELAY: 30
       # 任务2延迟（UTC6:00触发，对应北京时间14:00，延迟0-10分钟）
       TASK2_MIN_DELAY: 0
-      TASK2_MAX_DELAY: 600
+      TASK2_MAX_DELAY: 60
 
     steps:
     - name: Checkout repository
