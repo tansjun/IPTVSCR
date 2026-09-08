@@ -334,8 +334,28 @@ class AntiDetectScraper:
                     print(f"[DEBUG] 触发原生函数跳转: gotoIP('{item_id}', '{item_type}')")
                     
                     async with self.single_lock:
-                        # 使用 evaluate 直接运行页面函数
-                        await new_page.evaluate(f"gotoIP('{item_id}', '{item_type}')")
+                        # 等待混淆 JS（pabe06.js 等）执行完毕，gotoIP 函数就绪
+                        # domcontentloaded 只保证 DOM 解析完成，异步脚本可能尚未执行完
+                        goto_ready = False
+                        try:
+                            await new_page.wait_for_function("typeof gotoIP !== 'undefined'", timeout=20000)
+                            goto_ready = True
+                        except Exception as e:
+                            print(f"[WARN] [{item_id}] gotoIP 未就绪（{type(e).__name__}），改用直接 URL 跳转兜底")
+
+                        if goto_ready:
+                            # 参数走 Playwright 通道，避免字符串拼接注入
+                            await new_page.evaluate("([id, type]) => gotoIP(id, type)", [item_id, item_type])
+                        else:
+                            # 兜底：等价于 gotoIP 内部的跳转逻辑 index.php?p=xxx&t=xxx
+                            # （实测 gotoIP 跳转后的 URL 为 ?p=<id>&t=<type>，注意参数名是 t）
+                            fallback_url = f"https://iptv.cqshushu.com/index.php?p={quote(item_id)}&t={quote(item_type)}"
+                            fb_resp = await new_page.goto(fallback_url, wait_until="domcontentloaded", timeout=30000)
+                            if fb_resp and fb_resp.status in (429, 403):
+                                print(f"[WARN] [{item_id}] 兜底URL HTTP-CODE:{fb_resp.status}，重试 {retry}")
+                                page_timeout = True
+                                await asyncio.sleep(10 * retry)
+                                continue
                         
                         # 6. 等待跳转后的详情页加载完成
                         # 我们等待详情页特有的元素出现，比如“查看频道列表”按钮或 controls 区域
