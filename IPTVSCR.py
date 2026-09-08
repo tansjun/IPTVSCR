@@ -84,27 +84,141 @@ class AntiDetectScraper:
         self.db_conn.commit()
 
     async def inject_stealth(self, page):
-        """深度伪装脚本，绕过 toString 检测"""
+        """深度伪装脚本：隐藏 webdriver，并补齐语言/平台/插件/WebGL/权限/UA-CH 等易被检测的指纹"""
         await page.add_init_script("""
-            (function() {
-                const newProto = navigator.__proto__;
-                delete newProto.webdriver;
-                navigator.__proto__ = newProto;
-                window.chrome = { runtime: { connect: () => {} } };
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => {
-                        const ArrayProto = Object.create(PluginArray.prototype);
-                        return Object.assign(ArrayProto, { length: 0 });
-                    }
-                });
-                const desc = Object.getOwnPropertyDescriptor(navigator, 'webdriver');
-                if (desc) {
+            (() => {
+                // ---------- 1. 隐藏 navigator.webdriver（多层防御） ----------
+                try { delete Navigator.prototype.webdriver; } catch (e) {}
+                try { delete navigator.webdriver; } catch (e) {}
+                try {
                     Object.defineProperty(navigator, 'webdriver', {
                         get: Object.assign(() => undefined, {
                             toString: () => 'function get webdriver() { [native code] }'
                         })
                     });
-                }
+                } catch (e) {}
+
+                // ---------- 2. 平台指纹：UA 声明 Windows，platform 必须一致（无头 Linux 默认报 Linux） ----------
+                try {
+                    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+                } catch (e) {}
+
+                // ---------- 3. 语言指纹 ----------
+                try {
+                    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+                } catch (e) {}
+
+                // ---------- 4. 插件伪装（真实 Windows Chrome 有 5 个 PDF 插件，空数组是明显破绽） ----------
+                try {
+                    const pdfNames = ['PDF Viewer', 'Chrome PDF Viewer', 'Chromium PDF Viewer', 'Microsoft Edge PDF Viewer', 'WebKit built-in PDF'];
+                    const list = pdfNames.map((name, i) => ({
+                        name: name,
+                        description: 'Portable Document Format',
+                        filename: 'internal-pdf-viewer-' + (i + 1) + '.dll',
+                        length: 0,
+                        item: () => null,
+                        namedItem: () => null
+                    }));
+                    list.item = (i) => list[i] || null;
+                    list.namedItem = (n) => list.find(p => p.name === n) || null;
+                    list.refresh = () => {};
+                    Object.defineProperty(navigator, 'plugins', { get: () => list });
+                } catch (e) {}
+
+                // ---------- 5. window.chrome 完整对象（真实 Chrome 的属性远比空壳多） ----------
+                try {
+                    const ev = () => ({ addListener() {}, removeListener() {}, hasListener() {} });
+                    window.chrome = {
+                        app: {
+                            isInstalled: false,
+                            InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                            RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+                            getDetails() { return {}; },
+                            getIsInstalled() {},
+                            getManifest() { return {}; }
+                        },
+                        csi() { return {}; },
+                        loadTimes() { return {}; },
+                        runtime: {
+                            OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+                            OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+                            PlatformArch: { ARM: 'arm', X86_32: 'x86-32', X86_64: 'x86-64' },
+                            PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                            PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+                            RequestUpdateCheckStatus: { THROTTLED: 'throttled', NO_UPDATE: 'no_update', UPDATE_AVAILABLE: 'update_available' },
+                            connect() {},
+                            sendMessage() {},
+                            getManifest() { return {}; },
+                            id: undefined
+                        },
+                        webstore: {
+                            onInstallStageChanged: ev(),
+                            onDownloadProgress: ev(),
+                            install() {}
+                        }
+                    };
+                } catch (e) {}
+
+                // ---------- 6. permissions.query 伪装（无头常被返回 denied，真人浏览器为 prompt/granted） ----------
+                try {
+                    if (window.navigator.permissions && window.navigator.permissions.query) {
+                        const orig = window.navigator.permissions.query.bind(window.navigator.permissions);
+                        window.navigator.permissions.query = (params) => {
+                            if (params && params.name === 'notifications') {
+                                return Promise.resolve({ state: Notification.permission || 'prompt', onchange: null });
+                            }
+                            return orig(params);
+                        };
+                    }
+                } catch (e) {}
+
+                // ---------- 7. WebGL 渲染器伪装（无头模式返回 SwiftShader 是最强检测信号之一） ----------
+                try {
+                    const VENDOR = 'Google Inc. (NVIDIA)';
+                    const RENDERER = 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                    const patchGL = (gl) => {
+                        if (!gl || gl.__patched) return;
+                        gl.__patched = true;
+                        const origParam = gl.getParameter.bind(gl);
+                        const origExt = gl.getExtension.bind(gl);
+                        gl.getParameter = function (p) {
+                            const v = Number(p);
+                            if (v === 37445) return VENDOR;   // UNMASKED_VENDOR_WEBGL
+                            if (v === 37446) return RENDERER; // UNMASKED_RENDERER_WEBGL
+                            return origParam(p);
+                        };
+                        gl.getExtension = function (name) {
+                            if (String(name) === 'WEBGL_debug_renderer_info') {
+                                return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+                            }
+                            return origExt(name);
+                        };
+                    };
+                    const origGetContext = HTMLCanvasElement.prototype.getContext;
+                    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+                        const ctx = origGetContext.call(this, type, ...args);
+                        if (ctx && type && String(type).indexOf('webgl') === 0) patchGL(ctx);
+                        return ctx;
+                    };
+                } catch (e) {}
+
+                // ---------- 8. UA-CH（User-Agent Client Hints）平台对齐（无头 Linux 默认 platform=Linux） ----------
+                try {
+                    if (navigator.userAgentData) {
+                        Object.defineProperty(navigator.userAgentData, 'platform', { get: () => 'Windows' });
+                        const origHigh = navigator.userAgentData.getHighEntropyValues.bind(navigator.userAgentData);
+                        navigator.userAgentData.getHighEntropyValues = async (hints) => {
+                            const res = await origHigh(hints);
+                            if (res) {
+                                res.platform = 'Windows';
+                                res.platformVersion = '15.0.0';
+                                res.architecture = 'x86';
+                                res.bitness = '64';
+                            }
+                            return res;
+                        };
+                    }
+                } catch (e) {}
             })();
         """)
 
@@ -116,7 +230,14 @@ class AntiDetectScraper:
             print(f"[DEBUG] 浏览器模式: {'headless' if headless else 'headed'}")
             browser = await p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
             s = self.config['stealth_settings']
-            context = await browser.new_context(user_agent=s['user_agent'], viewport=s['viewport'])
+            # locale/timezone 必须传入 context：影响 Accept-Language 请求头、Intl API 和 Date 时区指纹
+            # （config.yaml 已配置这两项，此前未生效）
+            context = await browser.new_context(
+                user_agent=s['user_agent'],
+                viewport=s['viewport'],
+                locale=s.get('locale', 'zh-CN'),
+                timezone_id=s.get('timezone', 'Asia/Shanghai'),
+            )
             page = await context.new_page()
             
             for step in self.config['steps']:
@@ -247,17 +368,15 @@ class AntiDetectScraper:
                 
                 # 将生成的 URL 分发到 worker 异步处理
                 
-                #tasks.append(self.url_worker(context, detail_url, ip_id, ip_type,ip, step['tab_steps']))
                 tasks.append(asyncio.create_task(self.url_worker(context, detail_url,ip_id,ip_type,ip, tab_steps=step['tab_steps'])))
                 
                 task_count = len(tasks)
                 if task_count >= self.max_reteive_pages:
                     break
                 
-                # 稍微等待，确保每个信号量启动间隔超过1.5秒，避开 JS 代码里的 1000ms 频率检测（虽然我们直接访问 URL，但后端可能也有频率校验）
-                #wait_after = step.get('wait_after',1)
-                #if wait_after>0:
-                #    await asyncio.sleep(wait_after)  
+                # 错峰启动：间隔 0.8~1.8s 随机创建下一个任务，规避站点 JS 的 1000ms 频率检测
+                # （冷却锁只约束页面访问时刻，任务本身的创建节奏也要随机化）
+                await asyncio.sleep(random.uniform(0.8, 1.8))
                   
         if tasks:
             self.dispatch_num_failed=len(tasks)
@@ -322,7 +441,7 @@ class AntiDetectScraper:
                     if response.status == 429 or response.status==403:
                         if retry <3:
                             print(f"[WARN] HTTP-CODE:{response.status},[{item_id}]访问过于频繁，wait 20s后再试。重试{retry}")
-                            await asyncio.sleep(10*retry)
+                            await asyncio.sleep(12*retry + random.uniform(2, 8))
                             continue
                         else:
                             print(f"[ERROR] [{item_id}]超过重试次数。")
@@ -354,7 +473,7 @@ class AntiDetectScraper:
                             if fb_resp and fb_resp.status in (429, 403):
                                 print(f"[WARN] [{item_id}] 兜底URL HTTP-CODE:{fb_resp.status}，重试 {retry}")
                                 page_timeout = True
-                                await asyncio.sleep(10 * retry)
+                                await asyncio.sleep(12 * retry + random.uniform(2, 8))
                                 continue
                         
                         # 6. 等待跳转后的详情页加载完成
@@ -368,7 +487,7 @@ class AntiDetectScraper:
                         if '阿爬' in textinfo:
                             print(f"[ERROR] [{item_id}]，阿爬，wait 20s后重试：{retry}")
                             page_timeout=True
-                            await asyncio.sleep(10*retry)
+                            await asyncio.sleep(15*retry + random.uniform(2, 8))
                             continue
                                         
 
