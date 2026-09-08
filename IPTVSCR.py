@@ -501,7 +501,7 @@ class AntiDetectScraper:
                         except Exception as e:
                             print(f"[ERROR] [{item_id}]，wait 20s后重试：{retry}\n{e}")
                             page_timeout=True
-                            await asyncio.sleep(10*retry)
+                            await asyncio.sleep(12*retry + random.uniform(2, 8))
                             break
                     if not page_timeout:
                         async with self.file_lock: 
@@ -509,7 +509,17 @@ class AntiDetectScraper:
                         break
                     
             except Exception as e:
-                #await new_page.screenshot(path=f".logs/error_{item_id}.png")
+                # 失败现场快照：截图 + 标题 + URL + 正文片段，便于定位是被反爬拦截还是页面结构变化
+                try:
+                    await new_page.screenshot(path=f".logs/error_{item_id}.png", full_page=True)
+                    diag_title = await new_page.title()
+                    diag_body = await new_page.evaluate("document.body ? document.body.innerText.slice(0, 300) : ''")
+                    diag_body = diag_body.replace('\n', ' | ')
+                    print(f"[DIAG] [{item_id}] URL={new_page.url}")
+                    print(f"[DIAG] [{item_id}] TITLE={diag_title}")
+                    print(f"[DIAG] [{item_id}] BODY={diag_body}")
+                except Exception as de:
+                    print(f"[DIAG] [{item_id}] 现场快照失败: {de}")
                 print(f"[ERROR] 处理任务 {item_id} 时发生异常: {e}")
                 import traceback
                 trackmsg = traceback.format_exc()
