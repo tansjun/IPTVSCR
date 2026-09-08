@@ -111,7 +111,10 @@ class AntiDetectScraper:
     async def run(self):
         self._clear_logs()  # 每次执行先清空 .logs 目录旧文件
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False, args=["--disable-blink-features=AutomationControlled"])
+            # GitHub Actions 等无显示服务器环境需无头模式，本地可用 PLAYWRIGHT_HEADLESS 控制
+            headless = os.environ.get("PLAYWRIGHT_HEADLESS", "0").lower() in ("1", "true", "yes")
+            print(f"[DEBUG] 浏览器模式: {'headless' if headless else 'headed'}")
+            browser = await p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
             s = self.config['stealth_settings']
             context = await browser.new_context(user_agent=s['user_agent'], viewport=s['viewport'])
             page = await context.new_page()
