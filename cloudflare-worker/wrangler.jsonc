@@ -1,0 +1,17 @@
+{
+  // IPTVSCR 定时触发器配置
+  // 部署：npx wrangler@latest deploy
+  // 设置 secret：npx wrangler@latest secret put GITHUB_TOKEN
+  "name": "iptvscr-trigger",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-15",
+  "triggers": {
+    // Cloudflare Cron 使用 UTC 时区：0 4 * * * = 每天 04:00 UTC = 北京时间 12:00
+    "crons": ["0 4 * * *"]
+  },
+  "vars": {
+    "GITHUB_OWNER": "tansjun",
+    "GITHUB_REPO": "IPTVSCR",
+    "GITHUB_WORKFLOW": "main.yml"
+  }
+}

@@ -2,8 +2,9 @@ name: Daily Update
 
 on:
   schedule:
-    # 每天一次：UTC 04:00 触发（对应北京时间 12:00），无延迟
-    - cron: '0 4 * * *'
+    # 兜底定时：UTC 04:10（北京时间 12:10），主触发是 Cloudflare Worker（12:00 秒级触发 workflow_dispatch）
+    # GitHub schedule 为尽力而为，可能延迟数小时，故仅作兜底；守卫步骤会跳过当日已成功的运行
+    - cron: '10 4 * * *'
   workflow_dispatch:
     branches:
       - main
@@ -18,16 +19,35 @@ jobs:
       PLAYWRIGHT_HEADLESS: "1"
 
     steps:
+    # 当日去重守卫：仅对 schedule 兜底触发生效；手动/Worker 触发（workflow_dispatch）不受影响
+    # 若 main 上 hi-live.txt 已含今天的日期，说明当日已成功运行，秒退省时
+    - name: Skip if today already updated
+      id: skip_check
+      if: github.event_name == 'schedule'
+      run: |
+        TODAY=$(date +%F)
+        CONTENT=$(curl -sf --max-time 20 "https://raw.githubusercontent.com/tansjun/IPTVSCR/main/hi-live.txt" || true)
+        if echo "$CONTENT" | grep -qF "$TODAY"; then
+          echo "今日 ${TODAY} 已有成功产物，跳过兜底运行"
+          echo "should_skip=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "今日尚未更新，继续执行"
+          echo "should_skip=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Checkout repository
+      if: steps.skip_check.outputs.should_skip != 'true'
       uses: actions/checkout@v4
 
     - name: Set up Python
+      if: steps.skip_check.outputs.should_skip != 'true'
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
     # 缓存Python依赖与playwright浏览器，加速后续运行
     - name: Cache Python dependencies
+      if: steps.skip_check.outputs.should_skip != 'true'
       uses: actions/cache@v3
       with:
         path: |
@@ -38,20 +58,24 @@ jobs:
           ${{ runner.os }}-pip-
 
     - name: Install system dependencies (适配Ubuntu 22.04+)
+      if: steps.skip_check.outputs.should_skip != 'true'
       run: |
         sudo apt-get update -y
         sudo apt-get install -y --no-install-recommends libnss3 libatk-bridge2.0-0 libdrm-dev libxkbcommon-dev libgbm-dev libatspi2.0-0 libxshmfence-dev libasound2t64 libgtk-3-0 libx11-xcb1 libxcb-dri3-0 libxrandr2 libxcursor1 libxcomposite1 libasound2-plugins libpulse0
 
     - name: Install Python dependencies
+      if: steps.skip_check.outputs.should_skip != 'true'
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
         playwright install chromium --with-deps
 
     - name: Run Python script
+      if: steps.skip_check.outputs.should_skip != 'true'
       run: python IPTVSCR.py
 
     - name: Commit and push if changed
+      if: steps.skip_check.outputs.should_skip != 'true'
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
@@ -63,11 +87,13 @@ jobs:
 
     # 部署并入主流程：不再依赖 push 事件触发（push 触发偶尔会丢失，如 2026-09-08 16:46 那次）
     - name: Prepare deploy files
+      if: steps.skip_check.outputs.should_skip != 'true'
       run: |
         mkdir -p ./deploy
         cp ./*.txt ./deploy/
 
     - name: Deploy to GitHub Pages
+      if: steps.skip_check.outputs.should_skip != 'true'
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
