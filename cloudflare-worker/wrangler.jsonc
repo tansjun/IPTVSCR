@@ -6,8 +6,8 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-15",
   "triggers": {
-    // Cloudflare Cron 使用 UTC 时区：0 4 * * * = 每天 04:00 UTC = 北京时间 12:00
-    "crons": ["0 4 * * *"]
+    // Cloudflare Cron 使用 UTC 时区：0 9 * * * = 每天 09:00 UTC = 北京时间 17:00
+    "crons": ["0 9 * * *"]
   },
   "vars": {
     "GITHUB_OWNER": "tansjun",

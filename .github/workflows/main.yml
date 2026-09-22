@@ -2,9 +2,9 @@ name: Daily Update
 
 on:
   schedule:
-    # 兜底定时：UTC 04:10（北京时间 12:10），主触发是 Cloudflare Worker（12:00 秒级触发 workflow_dispatch）
+    # 兜底定时：UTC 09:10（北京时间 17:10），主触发是 Cloudflare Worker（17:00 秒级触发 workflow_dispatch）
     # GitHub schedule 为尽力而为，可能延迟数小时，故仅作兜底；守卫步骤会跳过当日已成功的运行
-    - cron: '10 4 * * *'
+    - cron: '10 9 * * *'
   workflow_dispatch:
     branches:
       - main

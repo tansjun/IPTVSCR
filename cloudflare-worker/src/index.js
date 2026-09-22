@@ -1,7 +1,7 @@
 /**
  * IPTVSCR 定时触发器（Cloudflare Worker）
  *
- * 作用：每天北京时间 12:00（UTC 04:00）通过 GitHub API 触发
+ * 作用：每天北京时间 17:00（UTC 09:00）通过 GitHub API 触发
  *       tansjun/IPTVSCR 仓库的 main.yml workflow_dispatch，
  *       绕开 GitHub Actions schedule 的"尽力而为"延迟。
  *
@@ -16,7 +16,7 @@
 
 export default {
   /**
-   * Cron 触发入口：wrangler.jsonc 里配置 "0 4 * * *"（UTC）= 北京时间每天 12:00
+   * Cron 触发入口：wrangler.jsonc 里配置 "0 9 * * *"（UTC）= 北京时间每天 17:00
    */
   async scheduled(event, env, ctx) {
     const result = await triggerDispatch(env);
@@ -38,7 +38,7 @@ export default {
       {
         ok: true,
         message: 'IPTVSCR 定时触发器在线',
-        cron: '0 4 * * * (UTC) = 每天北京时间 12:00',
+        cron: '0 9 * * * (UTC) = 每天北京时间 17:00',
         usage: 'POST / 手动触发一次',
         lastTrigger: env.LAST_TRIGGER || null
       },

@@ -1,6 +1,6 @@
 # IPTVSCR 定时触发器（Cloudflare Worker）
 
-每天**北京时间 12:00** 通过 GitHub API 触发 `tansjun/IPTVSCR` 的 `main.yml` workflow，
+每天**北京时间 17:00** 通过 GitHub API 触发 `tansjun/IPTVSCR` 的 `main.yml` workflow，
 绕开 GitHub Actions `schedule` 的"尽力而为"延迟（曾出现延迟近 5 小时）。
 
 ## 部署步骤
@@ -42,16 +42,16 @@ curl -X POST https://iptvscr-trigger.<你的子域>.workers.dev/
 
 ## 兜底机制
 
-main.yml 保留 GitHub 原生 cron `12:10`（UTC 04:10）作为兜底，
+main.yml 保留 GitHub 原生 cron `17:10`（UTC 09:10）作为兜底，
 带"当日去重守卫"：若 main 上 hi-live.txt 已包含今天日期则秒退，不重复抓取。
 
 ## 架构
 
 ```
-Cloudflare Cron (04:00 UTC = 北京 12:00)
+Cloudflare Cron (09:00 UTC = 北京 17:00)
    │  HTTPS POST + PAT
    ▼
 GitHub API workflow_dispatch → runner 执行 IPTVSCR.py → 提交 → 自动部署 Pages
    ▲
-   └── 兜底：GitHub cron 12:10 + 当日去重守卫（Worker 挂了/当天漏跑时补上）
+   └── 兜底：GitHub cron 17:10 + 当日去重守卫（Worker 挂了/当天漏跑时补上）
 ```
