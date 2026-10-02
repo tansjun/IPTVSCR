@@ -40,11 +40,6 @@ curl -X POST https://iptvscr-trigger.<你的子域>.workers.dev/
 
 触发后到 https://github.com/tansjun/IPTVSCR/actions 应能看到新的 Daily Update run。
 
-## 兜底机制
-
-main.yml 保留 GitHub 原生 cron `17:10`（UTC 09:10）作为兜底，
-带"当日去重守卫"：若 main 上 hi-live.txt 已包含今天日期则秒退，不重复抓取。
-
 ## 架构
 
 ```
@@ -52,6 +47,6 @@ Cloudflare Cron (09:00 UTC = 北京 17:00)
    │  HTTPS POST + PAT
    ▼
 GitHub API workflow_dispatch → runner 执行 IPTVSCR.py → 提交 → 自动部署 Pages
-   ▲
-   └── 兜底：GitHub cron 17:10 + 当日去重守卫（Worker 挂了/当天漏跑时补上）
 ```
+
+> 已移除 GitHub cron 兜底（其"尽力而为"延迟不可控）；含兜底的稳定版见 git 标签 `v1.0.0`。
