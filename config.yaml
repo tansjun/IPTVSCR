@@ -19,7 +19,7 @@ steps:
   - name: "选择地区"
     action_type: "interact"
     interactions:
-      - {type: "select", selector: "#provinceSelect", value: "海南"}
+      - {type: "select", selector: "#provinceSelect", value: "湖南"}
     # 注意：根据你的描述，选择完下拉框也会触发自动跳转
     wait_for_navigation: true 
 
