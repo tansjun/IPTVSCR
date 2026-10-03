@@ -266,15 +266,17 @@ class AntiDetectScraper:
 
             await browser.close()
 
-        self._merge_logs()  # 合并 .logs 全部 txt（跳过前两行）→ 根目录 {code}-live.txt
+        merged_ok = self._merge_logs()  # 合并 .logs 全部 txt（跳过前两行）→ 根目录 {code}-live.txt
 
-        # 空产出检测：根目录未生成有效 {code}-live.txt → 退出码 42（job 保持绿色，
+        # 空产出检测：本次运行未合并出有效输出 → 退出码 42（job 保持绿色，
         # 由 CI 反馈 Worker 后 10 分钟重触发，最多重试 2 次；成功产出则正常退出）
+        # 注意：必须依赖 merged_ok（本次是否写出），不能只查旧文件是否存在——
+        # 上一次成功提交遗留的 {code}-live.txt 会让空跑误判为成功
         out_name = f"{self.region_code}-live.txt" if self.region_code else "live.txt"
         base_dir = os.path.dirname(os.path.abspath(__file__))
         out_path = os.path.join(base_dir, out_name)
-        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-            print(f"[WARN] 空产出：未生成有效输出 {out_name}，退出码 42（等待 Worker 稍后重试）")
+        if not merged_ok or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            print(f"[WARN] 空产出：本次运行未生成有效输出 {out_name}，退出码 42（等待 Worker 稍后重试）")
             sys.exit(42)
         print(f"[SUCCESS] 输出文件正常: {out_name}")
 
@@ -875,16 +877,17 @@ class AntiDetectScraper:
                     print(f"[WARN] 清理 {name} 失败: {e}")
 
     def _merge_logs(self, log_dir=".logs", output_name=None):
-        """合并 .logs 中所有 txt（跳过头部两行），输出到根目录 {code}-live.txt"""
+        """合并 .logs 中所有 txt（跳过头部两行），输出到根目录 {code}-live.txt。
+        返回 True 表示本次运行真正写出了合并产物，False 表示本次空产出。"""
         if output_name is None:
             output_name = f"{self.region_code}-live.txt" if self.region_code else "live.txt"
         if not os.path.isdir(log_dir):
             print(f"[WARN] {log_dir} 目录不存在，跳过合并")
-            return
+            return False
         txt_files = sorted(f for f in os.listdir(log_dir) if f.lower().endswith(".txt"))
         if not txt_files:
             print(f"[WARN] {log_dir} 中没有 txt 文件，跳过合并")
-            return
+            return False
         merged = []
         for fname in txt_files:
             path = os.path.join(log_dir, fname)
@@ -899,7 +902,7 @@ class AntiDetectScraper:
             print(f"[DEBUG] 合并 {fname}: 有效行 {len(data_lines)}（文件共 {len(raw_lines)} 行）")
         if not merged:
             print("[WARN] 合并结果为空，不生成输出文件")
-            return
+            return False
 
         # 按类别分组（顺序：4K → 央视 → 卫视 → 其他）
         buckets = {cat: [] for cat in CATEGORY_ORDER}
@@ -926,6 +929,7 @@ class AntiDetectScraper:
         print(f"[SUCCESS] 已合并 {len(txt_files)} 个文件共 {len(merged)} 行 → {out_path}")
         for cat in CATEGORY_ORDER:
             print(f"[INFO] {cat}: {len(buckets[cat])} 条")
+        return True
 
     def test(self):
         cmd_str='custom_process_download'
