@@ -6,9 +6,17 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-15",
   "triggers": {
-    // Cloudflare Cron 使用 UTC 时区：0 9 * * * = 每天 09:00 UTC = 北京时间 17:00
-    "crons": ["0 9 * * *"]
+    // Cloudflare Cron 使用 UTC 时区：
+    // "0 9 * * *" = 每天 09:00 UTC = 北京时间 17:00 主触发
+    // "*/10 * * * *" = 空产出重试扫描（Worker 内部调度，最多重试 2 次）
+    "crons": ["0 9 * * *", "*/10 * * * *"]
   },
+  "kv_namespaces": [
+    {
+      "binding": "STATE",
+      "id": "f46eb7a6147543e98ef4aa5bd36b41da"
+    }
+  ],
   "vars": {
     "GITHUB_OWNER": "tansjun",
     "GITHUB_REPO": "IPTVSCR",

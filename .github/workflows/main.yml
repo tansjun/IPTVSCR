@@ -2,10 +2,15 @@ name: Daily Update
 
 on:
   # 仅由 Cloudflare Worker 触发（每天北京时间 17:00 秒级调用 workflow_dispatch），也可手动触发
-  # 已移除 GitHub schedule 兜底（其"尽力而为"延迟不可控）；回滚点：v1.0.0（含兜底版本）
+  # 空产出时 job 保持绿色（不发失败邮件），由 CI 反馈 Worker 后 10 分钟重触发，最多重试 2 次
   workflow_dispatch:
     branches:
       - main
+    inputs:
+      attempt:
+        description: 重试次数标记（0=首次，1/2=Worker 重试），仅供内部使用
+        required: false
+        default: '0'
 
 jobs:
   run_script:
@@ -47,26 +52,46 @@ jobs:
         pip install -r requirements.txt
         playwright install chromium --with-deps
 
+    # 脚本空产出时退出码 42；continue-on-error 保证 job 绿色、不发失败邮件，
+    # 由下一步把结果反馈给 Worker 调度 10 分钟后的重试
     - name: Run Python script
+      id: run_script
+      continue-on-error: true
       run: python IPTVSCR.py
 
+    # 空产出/异常反馈：脚本退出非零 → 上报 Worker → Worker 10 分钟后重新 dispatch（最多 2 次）
+    - name: Report empty output to worker
+      if: steps.run_script.outcome == 'failure'
+      continue-on-error: true
+      run: |
+        echo "[WARN] 本次运行无有效产出（attempt=${{ inputs.attempt }}），上报 Worker 稍后重试"
+        curl -sS -X POST -H "Content-Type: application/json" \
+          -d '{"attempt":"${{ inputs.attempt }}"}' \
+          "https://iptvscr-trigger.1105150696.workers.dev/result" || echo "[WARN] Worker 反馈失败（不影响本 job 状态）"
+
     - name: Commit and push if changed
+      id: commit_step
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
         git add -A
-        if ! git diff --staged --quiet; then
+        if ! git diff --staged --quiet -- '*.txt'; then
           git commit -m "Auto-update live files $(date +'%Y-%m-%d %H:%M:%S')"
           git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=false" >> "$GITHUB_OUTPUT"
         fi
 
-    # 部署并入主流程：不再依赖 push 事件触发（push 触发偶尔会丢失，如 2026-09-08 16:46 那次）
+    # 部署仅在根目录 .txt 有改动时执行：空产出不触发 pages build
     - name: Prepare deploy files
+      if: steps.commit_step.outputs.changed == 'true'
       run: |
         mkdir -p ./deploy
         cp ./*.txt ./deploy/
 
     - name: Deploy to GitHub Pages
+      if: steps.commit_step.outputs.changed == 'true'
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}

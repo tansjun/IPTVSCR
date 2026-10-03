@@ -43,10 +43,20 @@ curl -X POST https://iptvscr-trigger.<你的子域>.workers.dev/
 ## 架构
 
 ```
-Cloudflare Cron (09:00 UTC = 北京 17:00)
-   │  HTTPS POST + PAT
+Cloudflare Cron (09:00 UTC = 北京 17:00) 主触发
+   │  HTTPS POST + PAT（attempt=0）
    ▼
-GitHub API workflow_dispatch → runner 执行 IPTVSCR.py → 提交 → 自动部署 Pages
+GitHub API workflow_dispatch → runner 执行 IPTVSCR.py → 提交 → 仅当 .txt 有改动才部署 Pages
+   │
+   └─ 空产出（脚本退出码 42，job 保持绿色不报红）
+        │  POST /result {attempt}
+        ▼
+      Worker 写 KV 调度单（10 分钟后）
+        │  Cron "*/10 * * * *" 扫描到期
+        ▼
+      重新 dispatch（attempt=1 → 仍空 → attempt=2 → 不再重试，共 3 次机会）
 ```
 
-> 已移除 GitHub cron 兜底（其"尽力而为"延迟不可控）；含兜底的稳定版见 git 标签 `v1.0.0`。
+> - 已移除 GitHub cron 兜底（其"尽力而为"延迟不可控）；含兜底的稳定版见 git 标签 `v1.0.0`。
+> - 空产出不视为失败（防止失败邮件轰炸）：job 保持绿色，由 Worker 自动重试，最多 2 次。
+> - 需要 KV 命名空间（binding `STATE`，创建后把 id 填入 wrangler.jsonc）。

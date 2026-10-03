@@ -1,5 +1,6 @@
 import csv
 import os,time
+import sys
 import asyncio
 import yaml
 import sqlite3
@@ -266,6 +267,17 @@ class AntiDetectScraper:
             await browser.close()
 
         self._merge_logs()  # 合并 .logs 全部 txt（跳过前两行）→ 根目录 {code}-live.txt
+
+        # 空产出检测：根目录未生成有效 {code}-live.txt → 退出码 42（job 保持绿色，
+        # 由 CI 反馈 Worker 后 10 分钟重触发，最多重试 2 次；成功产出则正常退出）
+        out_name = f"{self.region_code}-live.txt" if self.region_code else "live.txt"
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        out_path = os.path.join(base_dir, out_name)
+        if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            print(f"[WARN] 空产出：未生成有效输出 {out_name}，退出码 42（等待 Worker 稍后重试）")
+            sys.exit(42)
+        print(f"[SUCCESS] 输出文件正常: {out_name}")
+
             
 
     async def execute_step_logic(self, page, context, step):
