@@ -72,7 +72,10 @@ jobs:
         python scripts/mihomo_gen.py /tmp/sub.yaml /tmp/mihomo-config/config.yaml
         echo "[INFO] 启动 mihomo（HTTP 7890 / SOCKS 7891）..."
         /tmp/mihomo -d /tmp/mihomo-config -f /tmp/mihomo-config/config.yaml > /tmp/mihomo.log 2>&1 &
-        sleep 4
+        sleep 10
+        echo "[INFO] --- mihomo.log 尾部 ---"
+        tail -n 30 /tmp/mihomo.log || true
+        echo "[INFO] -------------------------"
         curl -s -m 15 -x http://127.0.0.1:7890 -o /dev/null -w "proxy check: HTTP %{http_code}\n" https://www.gstatic.com/generate_204 || echo "[WARN] 代理自检失败（脚本将直连，可能空产出）"
 
     # 脚本空产出时退出码 42；continue-on-error 保证 job 绿色、不发失败邮件，

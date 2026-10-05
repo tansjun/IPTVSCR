@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """从 ikuuu Clash 订阅 YAML 生成最小 mihomo 配置：
 - 保留全部节点
-- 自动挑选第一个名称含「香港」的节点作为 GLOBAL 出口（global 模式全流量走它）
+- 香港节点组成 url-test 组（自动选优/故障切换，避免单节点入口被封导致整体失败）
+- GLOBAL 指向该组，global 模式全流量走香港
 - 本地监听 7890(HTTP) / 7891(SOCKS)
 
 用法: python mihomo_gen.py <订阅yaml路径> <输出config.yaml路径>
@@ -10,13 +11,13 @@
 import sys
 import yaml
 
-def pick_hk(proxies):
-    """优先名字含「香港」，其次 HK/Hong 关键字"""
-    for kw in ("香港", "HK", "Hong"):
-        for p in proxies:
-            if kw.lower() in p.get("name", "").lower():
-                return p["name"]
-    return None
+def pick_hk_nodes(proxies):
+    """按订阅顺序返回所有香港节点名（优先「香港」，其次 HK/Hong 关键字）"""
+    names = [p["name"] for p in proxies if "香港" in p.get("name", "")]
+    if not names:
+        names = [p["name"] for p in proxies if any(
+            k in p.get("name", "").upper() for k in ("HK", "HONG"))]
+    return names
 
 def main():
     if len(sys.argv) != 3:
@@ -29,8 +30,8 @@ def main():
     if not proxies:
         print("[ERROR] 订阅中没有可用节点", file=sys.stderr)
         sys.exit(1)
-    hk = pick_hk(proxies)
-    if not hk:
+    hk_nodes = pick_hk_nodes(proxies)
+    if not hk_nodes:
         print("[ERROR] 订阅中未找到香港节点", file=sys.stderr)
         sys.exit(1)
     new_cfg = {
@@ -38,16 +39,24 @@ def main():
         "socks-port": 7891,
         "allow-lan": False,
         "mode": "global",
-        "log-level": "warning",
+        "log-level": "info",
         "dns": {"enable": False},
         "proxies": proxies,
         "proxy-groups": [
-            {"name": "GLOBAL", "type": "select", "proxies": [hk]}
+            {
+                "name": "HK",
+                "type": "url-test",
+                "url": "http://www.gstatic.com/generate_204",
+                "interval": 60,
+                "tolerance": 50,
+                "proxies": hk_nodes,
+            },
+            {"name": "GLOBAL", "type": "select", "proxies": ["HK"]},
         ],
     }
     with open(out_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(new_cfg, f, allow_unicode=True, sort_keys=False)
-    print(f"[OK] 香港出口节点: {hk}")
+    print(f"[OK] 香港节点 {len(hk_nodes)} 个: {', '.join(hk_nodes[:5])} ...")
     print(f"[OK] 生成配置: {out_path}")
 
 if __name__ == "__main__":
