@@ -11,10 +11,6 @@ on:
         description: 重试次数标记（0=首次，1/2=Worker 重试），仅供内部使用
         required: false
         default: '0'
-      use_proxy:
-        description: 是否启用 ikuuu 代理出口（false=runner 直连站点，用于对比测试）
-        required: false
-        default: 'true'
 
 jobs:
   run_script:
@@ -56,51 +52,11 @@ jobs:
         pip install -r requirements.txt
         playwright install chromium --with-deps
 
-    # 代理出口：mihomo 加载 ikuuu 订阅并强制走香港节点（use_proxy=false 时跳过本步）
-    - name: Setup proxy (mihomo + ikuuu HK)
-      if: inputs.use_proxy == 'true'
-      id: proxy_step
-      continue-on-error: true
-      env:
-        IKUUU_SUB: ${{ secrets.IKUUU_SUB }}
-      run: |
-        set -e
-        echo "[INFO] 下载 mihomo ..."
-        curl -sL -m 60 -o /tmp/mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v1.18.10/mihomo-linux-amd64-v1.18.10.gz"
-        gunzip -f /tmp/mihomo.gz
-        chmod +x /tmp/mihomo
-        echo "[INFO] 拉取 ikuuu 订阅 ..."
-        curl -sL -m 60 "$IKUUU_SUB" -o /tmp/sub.yaml
-        pip install pyyaml -q
-        mkdir -p /tmp/mihomo-config
-        python scripts/mihomo_gen.py /tmp/sub.yaml /tmp/mihomo-config/config.yaml
-        echo "[INFO] 启动 mihomo（HTTP 7890 / SOCKS 7891）..."
-        /tmp/mihomo -d /tmp/mihomo-config -f /tmp/mihomo-config/config.yaml > /tmp/mihomo.log 2>&1 &
-        sleep 20
-        echo "[INFO] --- 入口域名系统解析视角（应为空路由 127.127.127.5） ---"
-        python -c "import socket; print('system DNS:', socket.gethostbyname('5.i.w.2.4.k.6.e.d.hk01-ae5.entry.v51124-5.qpon'))" || true
-        echo "[INFO] --- mihomo.log 尾部 ---"
-        tail -n 60 /tmp/mihomo.log || true
-        echo "[INFO] --- HK 组状态(初查) ---"
-        curl -s -m 10 http://127.0.0.1:9090/proxies/HK || echo "(API 不可达)"
-        echo ""
-        echo "[INFO] --- 代理自检(HTTP) ---"
-        curl -sv -m 15 -x http://127.0.0.1:7890 http://www.gstatic.com/generate_204 -o /dev/null 2>&1 | tail -n 8 || echo "[WARN] HTTP 自检失败"
-        echo "[INFO] --- 代理自检(HTTPS) ---"
-        curl -s -m 15 -x http://127.0.0.1:7890 -o /dev/null -w "proxy check: HTTP %{http_code}\n" https://www.gstatic.com/generate_204 || echo "[WARN] HTTPS 自检失败（脚本将直连，可能空产出）"
-        echo "[INFO] --- HK 组状态(复查) ---"
-        curl -s -m 10 http://127.0.0.1:9090/proxies/HK || echo "(API 不可达)"
-        echo ""
-        echo "[INFO] --- mihomo.log 尾部(复查) ---"
-        tail -n 40 /tmp/mihomo.log || true
-
-    # 脚本空产出时退出码 42；continue-on-error 保证 job 绿色、不发失败邮件，
-    # 由下一步把结果反馈给 Worker 调度 10 分钟后的重试
+    # 直连抓取。历史上站点曾对 Azure 数据中心 IP 暂时性加严（空产出），
+    # 已由下方「空产出保绿 + Worker 10 分钟重试（最多 2 次）」兜底，无需代理出口。
     - name: Run Python script
       id: run_script
       continue-on-error: true
-      env:
-        SCRAPE_PROXY: ${{ inputs.use_proxy == 'true' && 'http://127.0.0.1:7890' || '' }}
       run: python IPTVSCR.py
 
     # 空产出/异常反馈：脚本退出非零 → 上报 Worker → Worker 10 分钟后重新 dispatch（最多 2 次）
