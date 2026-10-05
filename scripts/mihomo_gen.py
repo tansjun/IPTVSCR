@@ -39,7 +39,7 @@ def main():
         "socks-port": 7891,
         "allow-lan": False,
         "mode": "global",
-        "log-level": "info",
+        "log-level": "debug",
         "external-controller": "127.0.0.1:9090",
         # 关键：机场 GTM 按解析器地域分流——境外 DNS 会把入口域名解析到空路由 127.127.127.5，
         # 必须用国内 DNS 解析代理服务器域名，才能拿到真实香港入口 IP
