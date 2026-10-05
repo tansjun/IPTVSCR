@@ -11,6 +11,10 @@ on:
         description: 重试次数标记（0=首次，1/2=Worker 重试），仅供内部使用
         required: false
         default: '0'
+      use_proxy:
+        description: 是否启用 ikuuu 代理出口（false=runner 直连站点，用于对比测试）
+        required: false
+        default: 'true'
 
 jobs:
   run_script:
@@ -52,9 +56,9 @@ jobs:
         pip install -r requirements.txt
         playwright install chromium --with-deps
 
-    # 代理出口：mihomo 加载 ikuuu 订阅并强制走香港节点，
-    # 规避 GitHub runner 的 Azure 数据中心 IP 被站点拉黑（本地已验证该 IP 池可访问）
+    # 代理出口：mihomo 加载 ikuuu 订阅并强制走香港节点（use_proxy=false 时跳过本步）
     - name: Setup proxy (mihomo + ikuuu HK)
+      if: inputs.use_proxy == 'true'
       id: proxy_step
       continue-on-error: true
       env:
@@ -96,7 +100,7 @@ jobs:
       id: run_script
       continue-on-error: true
       env:
-        SCRAPE_PROXY: http://127.0.0.1:7890
+        SCRAPE_PROXY: ${{ inputs.use_proxy == 'true' && 'http://127.0.0.1:7890' || '' }}
       run: python IPTVSCR.py
 
     # 空产出/异常反馈：脚本退出非零 → 上报 Worker → Worker 10 分钟后重新 dispatch（最多 2 次）
