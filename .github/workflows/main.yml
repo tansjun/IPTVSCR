@@ -52,11 +52,36 @@ jobs:
         pip install -r requirements.txt
         playwright install chromium --with-deps
 
+    # 代理出口：mihomo 加载 ikuuu 订阅并强制走香港节点，
+    # 规避 GitHub runner 的 Azure 数据中心 IP 被站点拉黑（本地已验证该 IP 池可访问）
+    - name: Setup proxy (mihomo + ikuuu HK)
+      id: proxy_step
+      continue-on-error: true
+      env:
+        IKUUU_SUB: ${{ secrets.IKUUU_SUB }}
+      run: |
+        set -e
+        echo "[INFO] 下载 mihomo ..."
+        curl -sL -m 60 -o /tmp/mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/v1.18.10/mihomo-linux-amd64-v1.18.10.gz"
+        gunzip -f /tmp/mihomo.gz
+        chmod +x /tmp/mihomo
+        echo "[INFO] 拉取 ikuuu 订阅 ..."
+        curl -sL -m 60 "$IKUUU_SUB" -o /tmp/sub.yaml
+        pip install pyyaml -q
+        mkdir -p /tmp/mihomo-config
+        python scripts/mihomo_gen.py /tmp/sub.yaml /tmp/mihomo-config/config.yaml
+        echo "[INFO] 启动 mihomo（HTTP 7890 / SOCKS 7891）..."
+        /tmp/mihomo -d /tmp/mihomo-config -f /tmp/mihomo-config/config.yaml > /tmp/mihomo.log 2>&1 &
+        sleep 4
+        curl -s -m 15 -x http://127.0.0.1:7890 -o /dev/null -w "proxy check: HTTP %{http_code}\n" https://www.gstatic.com/generate_204 || echo "[WARN] 代理自检失败（脚本将直连，可能空产出）"
+
     # 脚本空产出时退出码 42；continue-on-error 保证 job 绿色、不发失败邮件，
     # 由下一步把结果反馈给 Worker 调度 10 分钟后的重试
     - name: Run Python script
       id: run_script
       continue-on-error: true
+      env:
+        SCRAPE_PROXY: http://127.0.0.1:7890
       run: python IPTVSCR.py
 
     # 空产出/异常反馈：脚本退出非零 → 上报 Worker → Worker 10 分钟后重新 dispatch（最多 2 次）

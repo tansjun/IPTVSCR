@@ -229,7 +229,13 @@ class AntiDetectScraper:
             # GitHub Actions 等无显示服务器环境需无头模式，本地可用 PLAYWRIGHT_HEADLESS 控制
             headless = os.environ.get("PLAYWRIGHT_HEADLESS", "0").lower() in ("1", "true", "yes")
             print(f"[DEBUG] 浏览器模式: {'headless' if headless else 'headed'}")
-            browser = await p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
+            # 代理出口：CI 中由 mihomo 本地代理提供（规避 GitHub runner 的 Azure IP 被站点拉黑）
+            proxy_cfg = None
+            _proxy = os.environ.get("SCRAPE_PROXY", "").strip()
+            if _proxy:
+                proxy_cfg = {"server": _proxy}
+                print(f"[DEBUG] 使用代理出口: {_proxy}")
+            browser = await p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"], proxy=proxy_cfg)
             s = self.config['stealth_settings']
             # locale/timezone 必须传入 context：影响 Accept-Language 请求头、Intl API 和 Date 时区指纹
             # （config.yaml 已配置这两项，此前未生效）
