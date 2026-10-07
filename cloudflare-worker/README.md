@@ -44,7 +44,7 @@ curl -X POST https://iptvscr-trigger.<你的子域>.workers.dev/
 
 ```
 Cloudflare Cron (09:00 UTC = 北京 17:00) 主触发
-   │  HTTPS POST + PAT（attempt=0）
+   │  HTTPS POST + PAT（attempt=0；KV main:lastdate 去重，一天只触发一次）
    ▼
 GitHub API workflow_dispatch → runner 执行 IPTVSCR.py → 提交 → 仅当 .txt 有改动才部署 Pages
    │
@@ -59,4 +59,6 @@ GitHub API workflow_dispatch → runner 执行 IPTVSCR.py → 提交 → 仅当 
 
 > - 已移除 GitHub cron 兜底（其"尽力而为"延迟不可控）；含兜底的稳定版见 git 标签 `v1.0.0`。
 > - 空产出不视为失败（防止失败邮件轰炸）：job 保持绿色，由 Worker 自动重试，最多 2 次。
+> - **主触发防漏**：Cloudflare 免费计划 cron 为 best-effort，可能延迟/漏送。`*/10 * * * *` 扫描器在 UTC 09:15-09:59 检测到当天未触发时会自动补发一次（KV main:lastdate 去重，不会重复触发）。
 > - 需要 KV 命名空间（binding `STATE`，创建后把 id 填入 wrangler.jsonc）。
+> - GET / 状态页返回上次触发时间（KV meta:lastmain），可确认 cron 是否正常送达。

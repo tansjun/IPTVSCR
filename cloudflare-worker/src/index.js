@@ -4,32 +4,40 @@
  * 触发：
  *   - Cron "0 9 * * *"（UTC）= 每天北京时间 17:00 主触发（dispatch attempt=0）
  *   - Cron "* /10 * * * *" 扫描 KV 重试队列，到期则重新 dispatch（最多 2 次重试，共 3 次机会）
+ *     —— 同时兼作主触发兜底：09:15-09:59 UTC 内若发现当天尚未触发，自动补发一次，
+ *        防止主 cron 事件被 Cloudflare 延迟/漏送（免费计划 cron 为 best-effort）
  * 反馈：
  *   - POST /result {attempt:"0"|"1"|"2"} —— workflow 空产出时调用；
  *     attempt < 2 时写入 KV 调度单，10 分钟后重新 dispatch attempt+1
  * 手动：
  *   - POST / 立即触发一次（可选 JSON body {attempt}）
- *   - GET  / 状态页
+ *   - GET  / 状态页（含上次触发时间）
  *
  * Secret: GITHUB_TOKEN（public_repo 权限的 GitHub PAT）
- * KV: STATE（重试调度单，key = retry:<owner>/<repo>）
+ * KV: STATE（重试调度单 key=retry:<owner>/<repo>；主触发去重 key=main:lastdate；
+ *     上次触发时间 key=meta:lastmain）
  */
 
 const RETRY_DELAY_MS = 10 * 60 * 1000; // 10 分钟
 const MAX_RETRY = 2; // 最多重试 2 次（共 3 次机会：attempt 0/1/2）
+// 主触发兜底窗口：UTC 09:15 ~ 09:59（主 cron 为 09:00；15 分钟宽限后仍未触发则补发）
+const BACKSTOP_START_MIN = 9 * 60 + 15;
+const BACKSTOP_END_MIN = 9 * 60 + 59;
 
 export default {
   /**
    * Cron 触发入口：wrangler.jsonc 里配置
    *   "0 9 * * *"   —— 每天主触发（UTC 09:00 = 北京 17:00）
-   *   "* /10 * * * *" —— 空产出重试扫描
+   *   "* /10 * * * *" —— 重试扫描 + 主触发兜底
    */
   async scheduled(event, env, ctx) {
     let result;
     if (event.cron === "*/10 * * * *") {
-      result = await drainRetryQueue(env);
+      const retry = await drainRetryQueue(env);
+      const backstop = await maybeBackstop(env);
+      result = { retry, backstop };
     } else {
-      result = await triggerDispatch(env, 0);
+      result = await ensureDailyDispatch(env, 'main');
     }
     console.log(`[scheduled ${event.cron}] ${JSON.stringify(result)}`);
   },
@@ -70,10 +78,11 @@ export default {
         message: 'IPTVSCR 定时触发器在线',
         crons: [
           '0 9 * * * (UTC) = 每天北京时间 17:00 主触发',
-          '*/10 * * * * = 空产出重试扫描（最多 2 次）'
+          '*/10 * * * * = 重试扫描 + 主触发兜底（09:15-09:59 UTC 自动补发）'
         ],
         usage: 'POST / 手动触发；POST /result {attempt} 空产出反馈；GET / 状态',
-        lastTrigger: env.LAST_TRIGGER || null
+        lastTrigger: await env.STATE.get('meta:lastmain') || null,
+        lastMainDate: await env.STATE.get('main:lastdate') || null
       },
       200
     );
@@ -145,6 +154,44 @@ function retryKey(env) {
   const owner = env.GITHUB_OWNER || 'tansjun';
   const repo = env.GITHUB_REPO || 'IPTVSCR';
   return `retry:${owner}/${repo}`;
+}
+
+function utcDateStr(d = new Date()) {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * 每天只触发一次主 run（attempt=0）：
+ *   - 先查 KV main:lastdate，当天已触发则跳过（防止主 cron 与兜底重复 dispatch）
+ *   - 触发成功后才写 KV，失败留给下一次兜底尝试
+ */
+async function ensureDailyDispatch(env, source) {
+  if (!env.STATE) {
+    return { ok: false, status: 500, detail: 'KV (STATE) 未绑定' };
+  }
+  const today = utcDateStr();
+  const last = await env.STATE.get('main:lastdate');
+  if (last === today) {
+    return { ok: true, status: 200, detail: `今日已触发（${source} 跳过，lastdate=${last}）` };
+  }
+  const result = await triggerDispatch(env, 0);
+  if (result.ok) {
+    await env.STATE.put('main:lastdate', today);
+    await env.STATE.put('meta:lastmain', new Date().toISOString());
+  }
+  return { ...result, source };
+}
+
+/**
+ * 主触发兜底：仅在 UTC 09:15-09:59 窗口内尝试补发（主 cron 09:00 事件漏送时生效）
+ */
+async function maybeBackstop(env) {
+  const d = new Date();
+  const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+  if (mins < BACKSTOP_START_MIN || mins > BACKSTOP_END_MIN) {
+    return { ok: true, status: 200, detail: '非兜底窗口，跳过' };
+  }
+  return ensureDailyDispatch(env, 'backstop');
 }
 
 /**
